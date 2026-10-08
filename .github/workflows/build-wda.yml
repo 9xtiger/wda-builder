@@ -60,62 +60,6 @@ jobs:
                  Payload/WebDriverAgentRunner-Runner.app/Frameworks/Testing.framework \
                  Payload/WebDriverAgentRunner-Runner.app/Frameworks/libXCTestSwiftSupport.dylib
 
-          python3 - <<'PY'
-import os
-import struct
-
-APP = "Payload/WebDriverAgentRunner-Runner.app"
-WEAK = {
-    f"{APP}/PlugIns/WebDriverAgentRunner.xctest/WebDriverAgentRunner": ["libXCTestSwiftSupport"],
-    f"{APP}/Frameworks/XCTestCore.framework/XCTestCore": ["Testing.framework"],
-}
-
-
-def patch(path, needles):
-    with open(path, "rb") as f:
-        data = bytearray(f.read())
-    changed = 0
-
-    def slice_patch(base):
-        nonlocal changed
-        magic = struct.unpack_from("<I", data, base)[0]
-        if magic == 0xFEEDFACF:
-            header = 32
-        elif magic == 0xFEEDFACE:
-            header = 28
-        else:
-            return
-        ncmds = struct.unpack_from("<I", data, base + 16)[0]
-        off = base + header
-        for _ in range(ncmds):
-            cmd, cmdsize = struct.unpack_from("<II", data, off)
-            if cmd == 0x0C:
-                name_off = struct.unpack_from("<I", data, off + 8)[0]
-                name = bytes(data[off + name_off:off + cmdsize]).split(b"\x00")[0].decode()
-                if any(n in name for n in needles):
-                    struct.pack_into("<I", data, off, 0x18)
-                    changed += 1
-                    print("  weak:", name)
-            off += cmdsize
-
-    magic = struct.unpack_from(">I", data, 0)[0]
-    if magic in (0xCAFEBABE, 0xCAFEBABF):
-        nfat = struct.unpack_from(">I", data, 4)[0]
-        for i in range(nfat):
-            offset, _size = struct.unpack_from(">II", data, 8 + i * 20 + 8)
-            slice_patch(offset)
-    else:
-        slice_patch(0)
-    with open(path, "wb") as f:
-        f.write(data)
-    print(path, "changed", changed)
-
-
-for p, needles in WEAK.items():
-    if os.path.exists(p):
-        patch(p, needles)
-PY
-
           cat > ent.plist <<'EOF'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
