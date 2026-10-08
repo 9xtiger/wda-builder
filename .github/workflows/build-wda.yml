@@ -37,6 +37,8 @@ jobs:
           mkdir -p Payload
           cp -R "$APP" Payload/
 
+          find Payload -name "*.dSYM" -prune -exec rm -rf {} +
+
           python3 - <<'PY'
           import os
           import shutil
