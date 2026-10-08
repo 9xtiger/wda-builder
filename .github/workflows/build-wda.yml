@@ -39,6 +39,13 @@ jobs:
 
           find Payload -name "*.dSYM" -prune -exec rm -rf {} +
 
+          rm -rf Payload/WebDriverAgentRunner-Runner.app/Frameworks/XCTest.framework \
+                 Payload/WebDriverAgentRunner-Runner.app/Frameworks/XCTestCore.framework \
+                 Payload/WebDriverAgentRunner-Runner.app/Frameworks/XCTestSupport.framework \
+                 Payload/WebDriverAgentRunner-Runner.app/Frameworks/XCUIAutomation.framework \
+                 Payload/WebDriverAgentRunner-Runner.app/Frameworks/XCUnit.framework \
+                 Payload/WebDriverAgentRunner-Runner.app/Frameworks/XCTAutomationSupport.framework
+
           python3 - <<'PY'
           import os
           import shutil
