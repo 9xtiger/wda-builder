@@ -5,13 +5,25 @@ on:
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: macos-14
     timeout-minutes: 40
     steps:
-      - name: Checkout WebDriverAgent
+      - name: Select Xcode 15
+        run: |
+          ls -1 /Applications | grep -i '^Xcode' || true
+          for v in 15.4 15.3 15.2 15.1 15.0.1 15.0; do
+            if [ -d "/Applications/Xcode_${v}.app" ]; then
+              sudo xcode-select -s "/Applications/Xcode_${v}.app"
+              break
+            fi
+          done
+          xcodebuild -version
+
+      - name: Checkout WebDriverAgent (iOS 15 era)
         uses: actions/checkout@v4
         with:
           repository: appium/WebDriverAgent
+          ref: v8.7.0
           path: wda
 
       - name: Build WebDriverAgentRunner (unsigned)
@@ -27,7 +39,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""
           ls -la build/Build/Products/Release-iphoneos/
 
-      - name: Package IPA for iOS 15
+      - name: Package IPA
         working-directory: wda
         run: |
           set -e
@@ -44,74 +56,65 @@ jobs:
                  Payload/WebDriverAgentRunner-Runner.app/Frameworks/XCTestSupport.framework \
                  Payload/WebDriverAgentRunner-Runner.app/Frameworks/XCUIAutomation.framework \
                  Payload/WebDriverAgentRunner-Runner.app/Frameworks/XCUnit.framework \
-                 Payload/WebDriverAgentRunner-Runner.app/Frameworks/XCTAutomationSupport.framework
+                 Payload/WebDriverAgentRunner-Runner.app/Frameworks/XCTAutomationSupport.framework \
+                 Payload/WebDriverAgentRunner-Runner.app/Frameworks/Testing.framework \
+                 Payload/WebDriverAgentRunner-Runner.app/Frameworks/libXCTestSwiftSupport.dylib
 
           python3 - <<'PY'
-          import os
-          import shutil
-          import struct
+import os
+import struct
 
-          APP = "Payload/WebDriverAgentRunner-Runner.app"
-          WEAK = {
-              f"{APP}/PlugIns/WebDriverAgentRunner.xctest/WebDriverAgentRunner": ["libXCTestSwiftSupport"],
-              f"{APP}/Frameworks/XCTestCore.framework/XCTestCore": ["Testing.framework"],
-          }
+APP = "Payload/WebDriverAgentRunner-Runner.app"
+WEAK = {
+    f"{APP}/PlugIns/WebDriverAgentRunner.xctest/WebDriverAgentRunner": ["libXCTestSwiftSupport"],
+    f"{APP}/Frameworks/XCTestCore.framework/XCTestCore": ["Testing.framework"],
+}
 
-          def patch(path, needles):
-              with open(path, "rb") as f:
-                  data = bytearray(f.read())
-              changed = 0
 
-              def slice_patch(base):
-                  nonlocal changed
-                  magic = struct.unpack_from("<I", data, base)[0]
-                  if magic == 0xFEEDFACF:
-                      header = 32
-                  elif magic == 0xFEEDFACE:
-                      header = 28
-                  else:
-                      return
-                  ncmds = struct.unpack_from("<I", data, base + 16)[0]
-                  off = base + header
-                  for _ in range(ncmds):
-                      cmd, cmdsize = struct.unpack_from("<II", data, off)
-                      if cmd == 0x0C:
-                          name_off = struct.unpack_from("<I", data, off + 8)[0]
-                          name = bytes(data[off + name_off:off + cmdsize]).split(b"\x00")[0].decode()
-                          if any(n in name for n in needles):
-                              struct.pack_into("<I", data, off, 0x18)
-                              changed += 1
-                              print("  weak:", name)
-                      off += cmdsize
+def patch(path, needles):
+    with open(path, "rb") as f:
+        data = bytearray(f.read())
+    changed = 0
 
-              magic = struct.unpack_from(">I", data, 0)[0]
-              if magic in (0xCAFEBABE, 0xCAFEBABF):
-                  nfat = struct.unpack_from(">I", data, 4)[0]
-                  for i in range(nfat):
-                      offset, _size = struct.unpack_from(">II", data, 8 + i * 20 + 8)
-                      slice_patch(offset)
-              else:
-                  slice_patch(0)
-              with open(path, "wb") as f:
-                  f.write(data)
-              print(path, "changed", changed)
+    def slice_patch(base):
+        nonlocal changed
+        magic = struct.unpack_from("<I", data, base)[0]
+        if magic == 0xFEEDFACF:
+            header = 32
+        elif magic == 0xFEEDFACE:
+            header = 28
+        else:
+            return
+        ncmds = struct.unpack_from("<I", data, base + 16)[0]
+        off = base + header
+        for _ in range(ncmds):
+            cmd, cmdsize = struct.unpack_from("<II", data, off)
+            if cmd == 0x0C:
+                name_off = struct.unpack_from("<I", data, off + 8)[0]
+                name = bytes(data[off + name_off:off + cmdsize]).split(b"\x00")[0].decode()
+                if any(n in name for n in needles):
+                    struct.pack_into("<I", data, off, 0x18)
+                    changed += 1
+                    print("  weak:", name)
+            off += cmdsize
 
-          for p, needles in WEAK.items():
-              if os.path.exists(p):
-                  patch(p, needles)
+    magic = struct.unpack_from(">I", data, 0)[0]
+    if magic in (0xCAFEBABE, 0xCAFEBABF):
+        nfat = struct.unpack_from(">I", data, 4)[0]
+        for i in range(nfat):
+            offset, _size = struct.unpack_from(">II", data, 8 + i * 20 + 8)
+            slice_patch(offset)
+    else:
+        slice_patch(0)
+    with open(path, "wb") as f:
+        f.write(data)
+    print(path, "changed", changed)
 
-          for rel in (
-              f"{APP}/Frameworks/Testing.framework",
-              f"{APP}/Frameworks/libXCTestSwiftSupport.dylib",
-              f"{APP}/Frameworks/_Testing_Foundation.framework",
-          ):
-              if os.path.exists(rel):
-                  if os.path.isdir(rel):
-                      shutil.rmtree(rel)
-                  else:
-                      os.remove(rel)
-                  print("removed", rel)
-          PY
+
+for p, needles in WEAK.items():
+    if os.path.exists(p):
+        patch(p, needles)
+PY
 
           cat > ent.plist <<'EOF'
           <?xml version="1.0" encoding="UTF-8"?>
