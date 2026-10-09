@@ -49,6 +49,9 @@ jobs:
           mkdir -p Payload
           cp -R "$APP" Payload/
 
+          /usr/libexec/PlistBuddy -c "Add :UIFileSharingEnabled bool true" Payload/WebDriverAgentRunner-Runner.app/Info.plist 2>/dev/null || /usr/libexec/PlistBuddy -c "Set :UIFileSharingEnabled true" Payload/WebDriverAgentRunner-Runner.app/Info.plist
+          /usr/libexec/PlistBuddy -c "Add :LSSupportsOpeningDocumentsInPlace bool true" Payload/WebDriverAgentRunner-Runner.app/Info.plist 2>/dev/null || true
+
           find Payload -name "*.dSYM" -prune -exec rm -rf {} +
 
           rm -rf Payload/WebDriverAgentRunner-Runner.app/Frameworks/XCTest.framework \
